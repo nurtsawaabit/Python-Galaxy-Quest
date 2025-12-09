@@ -1,0 +1,1122 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { Rocket, Zap, AlertTriangle, Trophy, Volume2, VolumeX, Users, Play, BookOpen, RotateCcw, Activity, LogOut, Star, Sparkles, RefreshCw, X, List, Clock, CheckCircle, XCircle, Timer, Info, UserPlus, UserMinus } from 'lucide-react';
+
+/**
+ * KONFIGURASI FIREBASE
+ */
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app';
+
+let db, auth;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+} catch (e) {
+  console.warn("Firebase offline mode.");
+}
+
+// --- AUDIO SYSTEM ---
+const playSound = (type) => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+
+    if (type === 'roll') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.1);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } else if (type === 'win') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.setValueAtTime(500, now + 0.1);
+      osc.frequency.setValueAtTime(600, now + 0.2);
+      osc.frequency.setValueAtTime(800, now + 0.3);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 1.5);
+      osc.start(now);
+      osc.stop(now + 1.5);
+    } else if (type === 'step') { 
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.exponentialRampToValueAtTime(100, now + 0.05);
+      gainNode.gain.setValueAtTime(0.1, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 0.05);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } else if (type === 'ladder') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(200, now);
+      osc.frequency.linearRampToValueAtTime(800, now + 0.5);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+    } else if (type === 'snake') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(100, now + 0.6);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 0.6);
+      osc.start(now);
+      osc.stop(now + 0.6);
+    } else if (type === 'correct') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, now);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+    } else if (type === 'wrong') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    }
+  } catch (e) {
+    console.error("Audio error", e);
+  }
+};
+
+// --- DATA WILAYAH LENGKAP (38 PROVINSI) ---
+const DATA_WILAYAH_LENGKAP = {
+  "Aceh": ["Kab. Aceh Barat", "Kab. Aceh Barat Daya", "Kab. Aceh Besar", "Kab. Aceh Jaya", "Kab. Aceh Selatan", "Kab. Aceh Singkil", "Kab. Aceh Tamiang", "Kab. Aceh Tengah", "Kab. Aceh Tenggara", "Kab. Aceh Timur", "Kab. Aceh Utara", "Kab. Bener Meriah", "Kab. Bireuen", "Kab. Gayo Lues", "Kab. Nagan Raya", "Kab. Pidie", "Kab. Pidie Jaya", "Kab. Simeulue", "Kota Banda Aceh", "Kota Langsa", "Kota Lhokseumawe", "Kota Sabang", "Kota Subulussalam"],
+  "Sumatera Utara": ["Kab. Asahan", "Kab. Batu Bara", "Kab. Dairi", "Kab. Deli Serdang", "Kab. Humbang Hasundutan", "Kab. Karo", "Kab. Labuhanbatu", "Kab. Labuhanbatu Selatan", "Kab. Labuhanbatu Utara", "Kab. Langkat", "Kab. Mandailing Natal", "Kab. Nias", "Kab. Nias Barat", "Kab. Nias Selatan", "Kab. Nias Utara", "Kab. Padang Lawas", "Kab. Padang Lawas Utara", "Kab. Pakpak Bharat", "Kab. Samosir", "Kab. Serdang Bedagai", "Kab. Simalungun", "Kab. Tapanuli Selatan", "Kab. Tapanuli Tengah", "Kab. Tapanuli Utara", "Kab. Toba", "Kota Binjai", "Kota Gunungsitoli", "Kota Medan", "Kota Padangsidimpuan", "Kota Pematangsiantar", "Kota Sibolga", "Kota Tanjungbalai", "Kota Tebing Tinggi"],
+  "Sumatera Barat": ["Kab. Agam", "Kab. Dharmasraya", "Kab. Kepulauan Mentawai", "Kab. Lima Puluh Kota", "Kab. Padang Pariaman", "Kab. Pasaman", "Kab. Pasaman Barat", "Kab. Pesisir Selatan", "Kab. Sijunjung", "Kab. Solok", "Kab. Solok Selatan", "Kab. Tanah Datar", "Kota Bukittinggi", "Kota Padang", "Kota Padang Panjang", "Kota Pariaman", "Kota Payakumbuh", "Kota Sawahlunto", "Kota Solok"],
+  "Riau": ["Kab. Bengkalis", "Kab. Indragiri Hilir", "Kab. Indragiri Hulu", "Kab. Kampar", "Kab. Kepulauan Meranti", "Kab. Kuantan Singingi", "Kab. Pelalawan", "Kab. Rokan Hilir", "Kab. Rokan Hulu", "Kab. Siak", "Kota Dumai", "Kota Pekanbaru"],
+  "Jambi": ["Kab. Batanghari", "Kab. Bungo", "Kab. Kerinci", "Kab. Merangin", "Kab. Muaro Jambi", "Kab. Sarolangun", "Kab. Tanjung Jabung Barat", "Kab. Tanjung Jabung Timur", "Kab. Tebo", "Kota Jambi", "Kota Sungai Penuh"],
+  "Sumatera Selatan": ["Kab. Banyuasin", "Kab. Empat Lawang", "Kab. Lahat", "Kab. Muara Enim", "Kab. Musi Banyuasin", "Kab. Musi Rawas", "Kab. Musi Rawas Utara", "Kab. Ogan Ilir", "Kab. Ogan Komering Ilir", "Kab. Ogan Komering Ulu", "Kab. Ogan Komering Ulu Selatan", "Kab. Ogan Komering Ulu Timur", "Kab. Penukal Abab Lematang Ilir", "Kota Lubuklinggau", "Kota Pagar Alam", "Kota Palembang", "Kota Prabumulih"],
+  "Bengkulu": ["Kab. Bengkulu Selatan", "Kab. Bengkulu Tengah", "Kab. Bengkulu Utara", "Kab. Kaur", "Kab. Kepahiang", "Kab. Lebong", "Kab. Mukomuko", "Kab. Rejang Lebong", "Kab. Seluma", "Kota Bengkulu"],
+  "Lampung": ["Kab. Lampung Barat", "Kab. Lampung Selatan", "Kab. Lampung Tengah", "Kab. Lampung Timur", "Kab. Lampung Utara", "Kab. Mesuji", "Kab. Pesawaran", "Kab. Pesisir Barat", "Kab. Pringsewu", "Kab. Tanggamus", "Kab. Tulang Bawang", "Kab. Tulang Bawang Barat", "Kab. Way Kanan", "Kota Bandar Lampung", "Kota Metro"],
+  "Kep. Bangka Belitung": ["Kab. Bangka", "Kab. Bangka Barat", "Kab. Bangka Selatan", "Kab. Bangka Tengah", "Kab. Belitung", "Kab. Belitung Timur", "Kota Pangkalpinang"],
+  "Kep. Riau": ["Kab. Bintan", "Kab. Karimun", "Kab. Kepulauan Anambas", "Kab. Lingga", "Kab. Natuna", "Kota Batam", "Kota Tanjungpinang"],
+  "DKI Jakarta": ["Kab. Adm. Kepulauan Seribu", "Kota Adm. Jakarta Barat", "Kota Adm. Jakarta Pusat", "Kota Adm. Jakarta Selatan", "Kota Adm. Jakarta Timur", "Kota Adm. Jakarta Utara"],
+  "Jawa Barat": ["Kab. Bandung", "Kab. Bandung Barat", "Kab. Bekasi", "Kab. Bogor", "Kab. Ciamis", "Kab. Cianjur", "Kab. Cirebon", "Kab. Garut", "Kab. Indramayu", "Kab. Karawang", "Kab. Kuningan", "Kab. Majalengka", "Kab. Pangandaran", "Kab. Purwakarta", "Kab. Subang", "Kab. Sukabumi", "Kab. Sumedang", "Kab. Tasikmalaya", "Kota Bandung", "Kota Banjar", "Kota Bekasi", "Kota Bogor", "Kota Cimahi", "Kota Cirebon", "Kota Depok", "Kota Sukabumi", "Kota Tasikmalaya"],
+  "Jawa Tengah": ["Kab. Banjarnegara", "Kab. Banyumas", "Kab. Batang", "Kab. Blora", "Kab. Boyolali", "Kab. Brebes", "Kab. Cilacap", "Kab. Demak", "Kab. Grobogan", "Kab. Jepara", "Kab. Karanganyar", "Kab. Kebumen", "Kab. Kendal", "Kab. Klaten", "Kab. Kudus", "Kab. Magelang", "Kab. Pati", "Kab. Pekalongan", "Kab. Pemalang", "Kab. Purbalingga", "Kab. Purworejo", "Kab. Rembang", "Kab. Semarang", "Kab. Sragen", "Kab. Sukoharjo", "Kab. Tegal", "Kab. Temanggung", "Kab. Wonogiri", "Kab. Wonosobo", "Kota Magelang", "Kota Pekalongan", "Kota Salatiga", "Kota Semarang", "Kota Surakarta", "Kota Tegal"],
+  "DI Yogyakarta": ["Kab. Bantul", "Kab. Gunungkidul", "Kab. Kulon Progo", "Kab. Sleman", "Kota Yogyakarta"],
+  "Jawa Timur": ["Kab. Bangkalan", "Kab. Banyuwangi", "Kab. Blitar", "Kab. Bojonegoro", "Kab. Bondowoso", "Kab. Gresik", "Kab. Jember", "Kab. Jombang", "Kab. Kediri", "Kab. Lamongan", "Kab. Lumajang", "Kab. Madiun", "Kab. Magetan", "Kab. Malang", "Kab. Mojokerto", "Kab. Nganjuk", "Kab. Ngawi", "Kab. Pacitan", "Kab. Pamekasan", "Kab. Pasuruan", "Kab. Ponorogo", "Kab. Probolinggo", "Kab. Sampang", "Kab. Sidoarjo", "Kab. Situbondo", "Kab. Sumenep", "Kab. Trenggalek", "Kab. Tuban", "Kab. Tulungagung", "Kota Batu", "Kota Blitar", "Kota Kediri", "Kota Madiun", "Kota Malang", "Kota Mojokerto", "Kota Pasuruan", "Kota Probolinggo", "Kota Surabaya"],
+  "Banten": ["Kab. Lebak", "Kab. Pandeglang", "Kab. Serang", "Kab. Tangerang", "Kota Cilegon", "Kota Serang", "Kota Tangerang", "Kota Tangerang Selatan"],
+  "Bali": ["Kab. Badung", "Kab. Bangli", "Kab. Buleleng", "Kab. Gianyar", "Kab. Jembrana", "Kab. Karangasem", "Kab. Klungkung", "Kab. Tabanan", "Kota Denpasar"],
+  "Nusa Tenggara Barat": ["Kab. Bima", "Kab. Dompu", "Kab. Lombok Barat", "Kab. Lombok Tengah", "Kab. Lombok Timur", "Kab. Lombok Utara", "Kab. Sumbawa", "Kab. Sumbawa Barat", "Kota Bima", "Kota Mataram"],
+  "Nusa Tenggara Timur": ["Kab. Alor", "Kab. Belu", "Kab. Ende", "Kab. Flores Timur", "Kab. Kupang", "Kab. Lembata", "Kab. Malaka", "Kab. Manggarai", "Kab. Manggarai Barat", "Kab. Manggarai Timur", "Kab. Nagekeo", "Kab. Ngada", "Kab. Rote Ndao", "Kab. Sabu Raijua", "Kab. Sikka", "Kab. Sumba Barat", "Kab. Sumba Barat Daya", "Kab. Sumba Tengah", "Kab. Sumba Timur", "Kab. Timor Tengah Selatan", "Kab. Timor Tengah Utara", "Kota Kupang"],
+  "Kalimantan Barat": ["Kab. Bengkayang", "Kab. Kapuas Hulu", "Kab. Kayong Utara", "Kab. Ketapang", "Kab. Kubu Raya", "Kab. Landak", "Kab. Melawi", "Kab. Mempawah", "Kab. Sambas", "Kab. Sanggau", "Kab. Sekadau", "Kab. Sintang", "Kota Pontianak", "Kota Singkawang"],
+  "Kalimantan Tengah": ["Kab. Barito Selatan", "Kab. Barito Timur", "Kab. Barito Utara", "Kab. Gunung Mas", "Kab. Kapuas", "Kab. Katingan", "Kab. Kotawaringin Barat", "Kab. Kotawaringin Timur", "Kab. Lamandau", "Kab. Murung Raya", "Kab. Pulang Pisau", "Kab. Seruyan", "Kab. Sukamara", "Kota Palangka Raya"],
+  "Kalimantan Selatan": ["Kab. Balangan", "Kab. Banjar", "Kab. Barito Kuala", "Kab. Hulu Sungai Selatan", "Kab. Hulu Sungai Tengah", "Kab. Hulu Sungai Utara", "Kab. Kotabaru", "Kab. Tabalong", "Kab. Tanah Bumbu", "Kab. Tanah Laut", "Kab. Tapin", "Kota Banjarbaru", "Kota Banjarmasin"],
+  "Kalimantan Timur": ["Kab. Berau", "Kab. Kutai Barat", "Kab. Kutai Kartanegara", "Kab. Kutai Timur", "Kab. Mahakam Ulu", "Kab. Paser", "Kab. Penajam Paser Utara", "Kota Balikpapan", "Kota Bontang", "Kota Samarinda"],
+  "Kalimantan Utara": ["Kab. Bulungan", "Kab. Malinau", "Kab. Nunukan", "Kab. Tana Tidung", "Kota Tarakan"],
+  "Sulawesi Utara": ["Kab. Bolaang Mongondow", "Kab. Bolaang Mongondow Selatan", "Kab. Bolaang Mongondow Timur", "Kab. Bolaang Mongondow Utara", "Kab. Kepulauan Sangihe", "Kab. Kepulauan Siau Tagulandang Biaro", "Kab. Kepulauan Talaud", "Kab. Minahasa", "Kab. Minahasa Selatan", "Kab. Minahasa Tenggara", "Kab. Minahasa Utara", "Kota Bitung", "Kota Kotamobagu", "Kota Manado", "Kota Tomohon"],
+  "Sulawesi Tengah": ["Kab. Banggai", "Kab. Banggai Kepulauan", "Kab. Banggai Laut", "Kab. Buol", "Kab. Donggala", "Kab. Morowali", "Kab. Morowali Utara", "Kab. Parigi Moutong", "Kab. Poso", "Kab. Sigi", "Kab. Tojo Una-Una", "Kab. Tolitoli", "Kota Palu"],
+  "Sulawesi Selatan": ["Kab. Bantaeng", "Kab. Barru", "Kab. Bone", "Kab. Bulukumba", "Kab. Enrekang", "Kab. Gowa", "Kab. Jeneponto", "Kab. Kepulauan Selayar", "Kab. Luwu", "Kab. Luwu Timur", "Kab. Luwu Utara", "Kab. Maros", "Kab. Pangkajene Dan Kepulauan", "Kab. Pinrang", "Kab. Sidenreng Rappang", "Kab. Sinjai", "Kab. Soppeng", "Kab. Takalar", "Kab. Tana Toraja", "Kab. Toraja Utara", "Kab. Wajo", "Kota Makassar", "Kota Palopo", "Kota Parepare"],
+  "Sulawesi Tenggara": ["Kab. Bombana", "Kab. Buton", "Kab. Buton Selatan", "Kab. Buton Tengah", "Kab. Buton Utara", "Kab. Kolaka", "Kab. Kolaka Timur", "Kab. Kolaka Utara", "Kab. Konawe", "Kab. Konawe Kepulauan", "Kab. Konawe Selatan", "Kab. Konawe Utara", "Kab. Muna", "Kab. Muna Barat", "Kab. Wakatobi", "Kota Baubau", "Kota Kendari"],
+  "Gorontalo": ["Kab. Boalemo", "Kab. Bone Bolango", "Kab. Gorontalo", "Kab. Gorontalo Utara", "Kab. Pohuwato", "Kota Gorontalo"],
+  "Sulawesi Barat": ["Kab. Majene", "Kab. Mamasa", "Kab. Mamuju", "Kab. Mamuju Tengah", "Kab. Pasangkayu", "Kab. Polewali Mandar"],
+  "Maluku": ["Kab. Buru", "Kab. Buru Selatan", "Kab. Kepulauan Aru", "Kab. Kepulauan Tanimbar", "Kab. Maluku Barat Daya", "Kab. Maluku Tengah", "Kab. Maluku Tenggara", "Kab. Seram Bagian Barat", "Kab. Seram Bagian Timur", "Kota Ambon", "Kota Tual"],
+  "Maluku Utara": ["Kab. Halmahera Barat", "Kab. Halmahera Selatan", "Kab. Halmahera Tengah", "Kab. Halmahera Timur", "Kab. Halmahera Utara", "Kab. Kepulauan Sula", "Kab. Pulau Morotai", "Kab. Pulau Taliabu", "Kota Ternate", "Kota Tidore Kepulauan"],
+  "Papua": ["Kab. Biak Numfor", "Kab. Jayapura", "Kab. Keerom", "Kab. Kepulauan Yapen", "Kab. Mamberamo Raya", "Kab. Sarmi", "Kab. Supiori", "Kab. Waropen", "Kota Jayapura"],
+  "Papua Barat": ["Kab. Fakfak", "Kab. Kaimana", "Kab. Manokwari", "Kab. Manokwari Selatan", "Kab. Pegunungan Arfak", "Kab. Teluk Bintuni", "Kab. Teluk Wondama"],
+  "Papua Selatan": ["Kab. Asmat", "Kab. Boven Digoel", "Kab. Mappi", "Kab. Merauke"],
+  "Papua Tengah": ["Kab. Deiyai", "Kab. Dogiyai", "Kab. Intan Jaya", "Kab. Mimika", "Kab. Nabire", "Kab. Paniai", "Kab. Puncak", "Kab. Puncak Jaya"],
+  "Papua Pegunungan": ["Kab. Jayawijaya", "Kab. Lanny Jaya", "Kab. Mamberamo Tengah", "Kab. Nduga", "Kab. Pegunungan Bintang", "Kab. Tolikara", "Kab. Yahukimo", "Kab. Yalimo"],
+  "Papua Barat Daya": ["Kab. Maybrat", "Kab. Raja Ampat", "Kab. Sorong", "Kab. Sorong Selatan", "Kab. Tambrauw", "Kota Sorong"]
+};
+
+const PROVINSI_KEYS = Object.keys(DATA_WILAYAH_LENGKAP).sort();
+
+// --- GENERATOR SOAL ---
+const generateQuestionBank = () => {
+  const bank = { mudah: [], sedang: [], sulit: [] };
+  let idCounter = 0;
+
+  // --- 1. SOAL TEORI STATIS ---
+  const theoryEasy = [
+    { q: "Fungsi untuk menampilkan output?", options: ["print()", "show()", "out()", "write()"], ans: 0, explanation: "Fungsi print() digunakan untuk mencetak output ke konsol." },
+    { q: "Simbol komentar satu baris?", options: ["//", "#", "/*", "--"], ans: 1, explanation: "Tanda pagar (#) digunakan untuk komentar satu baris di Python." },
+    { q: "Tipe data angka bulat?", options: ["float", "int", "str", "bool"], ans: 1, explanation: "Integer (int) adalah tipe data untuk bilangan bulat." },
+    { q: "Tipe data teks?", options: ["text", "char", "str", "string"], ans: 2, explanation: "String (str) adalah tipe data untuk teks di Python." },
+    { q: "Hasil 10 + 5?", options: ["15", "105", "50", "2"], ans: 0, explanation: "Operator + melakukan penjumlahan aritmatika." },
+    { q: "Boolean True artinya?", options: ["Salah", "Benar", "Kosong", "Nol"], ans: 1, explanation: "True merepresentasikan nilai kebenaran 'Benar'." },
+    { q: "Operator sisa bagi?", options: ["/", "%", "//", "#"], ans: 1, explanation: "Operator modulus (%) menghasilkan sisa pembagian." },
+    { q: "x = 5. x adalah?", options: ["Fungsi", "Variabel", "Tipe Data", "Loop"], ans: 1, explanation: "x adalah variabel yang menyimpan nilai 5." },
+    { q: "Penulisan variabel yang SALAH?", options: ["nama_saya", "namaSaya", "1nama", "nama1"], ans: 2, explanation: "Nama variabel tidak boleh diawali dengan angka." },
+    { q: "Operator pemangkatan?", options: ["^", "**", "pow", "exp"], ans: 1, explanation: "** adalah operator pemangkatan di Python (misal 2**3 = 8)." },
+    { q: "Konversi ke string?", options: ["str()", "int()", "text()", "to_string()"], ans: 0, explanation: "Fungsi str() mengubah tipe data lain menjadi string." },
+    { q: "input() menghasilkan tipe?", options: ["int", "float", "str", "bool"], ans: 2, explanation: "Fungsi input() selalu mengembalikan data bertipe string." },
+    { q: "Simbol assignment?", options: ["==", "=", ":", "->"], ans: 1, explanation: "Tanda sama dengan (=) digunakan untuk memberi nilai pada variabel." },
+    { q: "Apa itu IDLE?", options: ["Game", "Editor Python", "Website", "OS"], ans: 1, explanation: "IDLE adalah Integrated Development and Learning Environment bawaan Python." },
+    { q: "Extension file Python?", options: [".py", ".pt", ".ph", ".pi"], ans: 0, explanation: "Kode sumber Python disimpan dengan ekstensi .py." },
+  ];
+
+  const theoryMedium = [
+    { q: "Cara membuat list?", options: ["{}", "[]", "()", "<>"], ans: 1, explanation: "List di Python didefinisikan dengan kurung siku []." },
+    { q: "Index pertama list?", options: ["1", "0", "-1", "A"], ans: 1, explanation: "Indeks di Python selalu dimulai dari 0." },
+    { q: "Menambah data ke list?", options: ["add()", "plus()", "append()", "insert()"], ans: 2, explanation: "Method append() menambahkan elemen ke akhir list." },
+    { q: "Loop dengan jumlah pasti?", options: ["while", "for", "if", "switch"], ans: 1, explanation: "For loop digunakan untuk iterasi yang jumlahnya sudah diketahui." },
+    { q: "Loop selama kondisi True?", options: ["for", "do-while", "while", "repeat"], ans: 2, explanation: "While loop berjalan terus selama kondisinya bernilai True." },
+    { q: "Menghentikan loop paksa?", options: ["stop", "exit", "break", "continue"], ans: 2, explanation: "Statement break menghentikan paksa perulangan." },
+    { q: "Melompati iterasi loop?", options: ["skip", "pass", "continue", "next"], ans: 2, explanation: "Continue melewatkan sisa kode di iterasi saat ini dan lanjut ke iterasi berikutnya." },
+    { q: "len([1,2,3])?", options: ["2", "3", "4", "0"], ans: 1, explanation: "Fungsi len() menghitung jumlah elemen, di sini ada 3 elemen." },
+    { q: "Struktur data key-value?", options: ["List", "Tuple", "Dictionary", "Set"], ans: 2, explanation: "Dictionary menyimpan data dalam pasangan Key-Value." },
+    { q: "Dictionary pakai kurung?", options: ["[]", "{}", "()", "<>"], ans: 1, explanation: "Dictionary didefinisikan dengan kurung kurawal {}." },
+    { q: "Tuple bersifat?", options: ["Mutable", "Immutable", "Flexible", "Dynamic"], ans: 1, explanation: "Tuple bersifat immutable, artinya isinya tidak bisa diubah setelah dibuat." },
+    { q: "Akses value dictionary?", options: ["dict[key]", "dict(key)", "dict.get", "Semua Benar"], ans: 3, explanation: "Bisa pakai kurung siku atau method .get()." },
+    { q: "range(5) menghasilkan?", options: ["0-5", "1-5", "0-4", "1-4"], ans: 2, explanation: "range(n) menghasilkan urutan dari 0 sampai n-1." },
+    { q: "if x > 5: disebut?", options: ["Loop", "Kondisi", "Fungsi", "Kelas"], ans: 1, explanation: "Ini adalah pernyataan kondisional (percabangan)." },
+    { q: "x += 1 artinya?", options: ["x = x + 1", "x = 1", "x + 1", "Error"], ans: 0, explanation: "+= adalah operator assignment penjumlahan." },
+  ];
+
+  const theoryHard = [
+    { q: "Keyword membuat fungsi?", options: ["func", "def", "function", "lambda"], ans: 1, explanation: "Def (define) digunakan untuk mendefinisikan fungsi." },
+    { q: "Mengembalikan nilai fungsi?", options: ["print", "back", "return", "output"], ans: 2, explanation: "Return menghentikan fungsi dan mengembalikan nilai." },
+    { q: "Variabel di dalam fungsi?", options: ["Global", "Lokal", "Universal", "Static"], ans: 1, explanation: "Variabel yang dibuat di dalam fungsi bersifat lokal." },
+    { q: "Library matematika?", options: ["math", "calc", "algebra", "num"], ans: 0, explanation: "Modul 'math' menyediakan fungsi-fungsi matematika standar." },
+    { q: "Menangkap error?", options: ["try-catch", "try-except", "do-catch", "if-error"], ans: 1, explanation: "Blok try-except digunakan untuk menangani exception (error)." },
+    { q: "OOP: Cetak biru objek?", options: ["Object", "Method", "Class", "Attribute"], ans: 2, explanation: "Class adalah blueprint atau cetak biru untuk membuat objek." },
+    { q: "Fungsi di dalam class?", options: ["Variabel", "Method", "Atribut", "Constructor"], ans: 1, explanation: "Fungsi yang didefinisikan di dalam class disebut Method." },
+    { q: "__init__ adalah?", options: ["Destructor", "Constructor", "Method biasa", "Variabel"], ans: 1, explanation: "__init__ adalah constructor yang dijalankan saat objek dibuat." },
+    { q: "Import modul spesifik?", options: ["import x", "from x import y", "using x", "include x"], ans: 1, explanation: "Syntax 'from ... import ...' mengambil bagian tertentu dari modul." },
+    { q: "Membuka file txt?", options: ["open()", "read()", "file()", "load()"], ans: 0, explanation: "Fungsi open() digunakan untuk membuka file." },
+    { q: "Mode 'w' pada file?", options: ["Read", "Write", "Append", "Binary"], ans: 1, explanation: "'w' berarti write mode (menulis), yang akan menimpa isi file lama." },
+    { q: "Rekursi adalah?", options: ["Loop biasa", "Fungsi memanggil diri", "Error", "List"], ans: 1, explanation: "Rekursi terjadi ketika fungsi memanggil dirinya sendiri." },
+    { q: "PIP adalah?", options: ["Game", "Package Installer", "Python UI", "Editor"], ans: 1, explanation: "PIP adalah manajer paket standar untuk Python." },
+    { q: "Slicing [::-1]?", options: ["Copy", "Reverse", "Error", "Kosong"], ans: 1, explanation: "Step -1 akan membalikkan urutan sequence." },
+    { q: "pass statement?", options: ["Stop", "Lanjut", "Tidak melakukan apa-apa", "Keluar"], ans: 2, explanation: "Pass adalah placeholder null operation (tidak melakukan apa-apa)." },
+  ];
+
+  bank.mudah.push(...theoryEasy.map(i => ({...i, id: `EZ-TH-${idCounter++}`, type: "Teori"})));
+  bank.sedang.push(...theoryMedium.map(i => ({...i, id: `MD-TH-${idCounter++}`, type: "Teori"})));
+  bank.sulit.push(...theoryHard.map(i => ({...i, id: `HD-TH-${idCounter++}`, type: "Teori"})));
+
+  // --- 2. GENERATOR SOAL DINAMIS ---
+  const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+  for (let i = 0; i < 185; i++) {
+    const a = rnd(2, 20);
+    const b = rnd(2, 20);
+    const ops = [{ s: '+', r: a + b }, { s: '-', r: a - b }, { s: '*', r: a * b }];
+    const op = ops[rnd(0, 2)];
+    const wr1 = op.r + rnd(1, 5);
+    const wr2 = op.r - rnd(1, 5);
+    const wr3 = op.r + 10;
+    const options = [String(op.r), String(wr1), String(wr2), String(wr3)].sort(() => Math.random() - 0.5);
+    
+    bank.mudah.push({
+      id: `EZ-GEN-${idCounter++}`,
+      q: `Hasil dari: print(${a} ${op.s} ${b}) ?`,
+      options: options,
+      ans: options.indexOf(String(op.r)),
+      explanation: `Operasi ${a} ${op.s} ${b} menghasilkan ${op.r}.`,
+      type: "Logika"
+    });
+  }
+
+  for (let i = 0; i < 185; i++) {
+    if (i % 2 === 0) {
+      const len = rnd(4, 6);
+      const lst = Array.from({length: len}, () => rnd(10, 99));
+      const idx = rnd(0, len-1);
+      const val = lst[idx];
+      const options = [String(val), String(lst[(idx+1)%len]), String(rnd(10,99)), "Error"].sort(() => Math.random() - 0.5);
+      bank.sedang.push({
+        id: `MD-GEN-${idCounter++}`,
+        q: `x = [${lst.join(', ')}]. \nApa output print(x[${idx}])?`,
+        options: options,
+        ans: options.indexOf(String(val)),
+        explanation: `List index dimulai dari 0. Elemen pada index ke-${idx} adalah ${val}.`,
+        type: "List"
+      });
+    } else {
+      const a = rnd(10, 50);
+      const b = rnd(3, 9);
+      const res = a % b;
+      const options = [String(res), String(Math.floor(a/b)), String(res+1), String(b)].sort(() => Math.random() - 0.5);
+      bank.sedang.push({
+        id: `MD-GEN-${idCounter++}`,
+        q: `Hasil dari: print(${a} % ${b}) ?`,
+        options: options,
+        ans: options.indexOf(String(res)),
+        explanation: `${a} dibagi ${b} bersisa ${res}. Operator % adalah modulus (sisa bagi).`,
+        type: "Aritmatika"
+      });
+    }
+  }
+
+  for (let i = 0; i < 185; i++) {
+    const words = ["PYTHON", "CODING", "BELAJAR", "SNAKES", "GALAXY"];
+    const word = words[rnd(0, words.length-1)];
+    if (i % 2 === 0) {
+      const start = rnd(0, 2);
+      const end = rnd(3, 5);
+      const res = word.slice(start, end);
+      const wr1 = word.slice(start, end+1);
+      const wr2 = word.slice(start+1, end);
+      const options = [`'${res}'`, `'${wr1}'`, `'${wr2}'`, "Error"].sort(() => Math.random() - 0.5);
+      bank.sulit.push({
+        id: `HD-GEN-${idCounter++}`,
+        q: `s = "${word}". \nOutput print(s[${start}:${end}])?`,
+        options: options,
+        ans: options.indexOf(`'${res}'`),
+        explanation: `Slicing [${start}:${end}] mengambil karakter dari index ${start} sampai sebelum index ${end}.`,
+        type: "Slicing"
+      });
+    } else {
+      const valA = rnd(0, 1) === 1;
+      const valB = rnd(0, 1) === 1;
+      const op = rnd(0, 1) === 1 ? "and" : "or";
+      let res; if (op === "and") res = valA && valB; else res = valA || valB;
+      bank.sulit.push({
+        id: `HD-GEN-${idCounter++}`,
+        q: `Output: print(${valA} ${op} ${valB}) ?`,
+        options: ["True", "False", "Error", "None"],
+        ans: res ? 0 : 1,
+        explanation: `Logika '${op}': ${valA} ${op} ${valB} menghasilkan ${res}.`,
+        type: "Logika"
+      });
+    }
+  }
+  return bank;
+};
+
+// --- SINGLE SOURCE OF TRUTH FOR EVENT TILES ---
+const isChallengeTile = (num) => {
+  if (num === 1 || num === 50) return false;
+  const specificTiles = [22, 17, 29, 47, 5, 13, 24, 31];
+  return (num % 5 === 0 || specificTiles.includes(num));
+};
+
+// --- KOMPONEN VICTORY (POPUP MERIAH) ---
+const VictoryOverlay = ({ winnerName, avatar, score, onReset, onExit }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-500">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+         {[...Array(50)].map((_, i) => (
+           <div key={i} className="absolute w-2 h-2 bg-gradient-to-br from-yellow-400 to-red-500 rounded-sm animate-confetti" 
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: `-5%`,
+                  animationDelay: `${Math.random() * 2}s`,
+                  animationDuration: `${2 + Math.random() * 3}s`,
+                  backgroundColor: `hsl(${Math.random() * 360}, 100%, 50%)`
+                }} 
+           />
+         ))}
+      </div>
+
+      <div className="relative bg-slate-800 border-4 border-yellow-400 p-8 rounded-3xl shadow-[0_0_100px_rgba(250,204,21,0.5)] flex flex-col items-center text-center max-w-lg w-full transform transition-all animate-bounce-in">
+        <Sparkles size={64} className="text-yellow-300 absolute -top-8 -left-8 animate-spin-slow" />
+        <Star size={64} className="text-yellow-300 absolute -bottom-8 -right-8 animate-pulse" />
+        
+        <div className="mb-4 relative">
+          <div className="absolute inset-0 bg-yellow-500 blur-2xl opacity-20 rounded-full animate-pulse"></div>
+          <Trophy size={80} className="text-yellow-400 relative z-10 animate-bounce" />
+        </div>
+
+        <h2 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-orange-400 to-yellow-300 mb-2 animate-pulse">
+          SELAMAT!
+        </h2>
+        <p className="text-slate-300 text-base mb-6">Kamu telah menaklukkan galaksi Python!</p>
+
+        <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-700 w-full mb-8">
+          <div className="text-6xl mb-2 filter drop-shadow-md">{avatar}</div>
+          <div className="text-2xl font-bold text-white mb-1">{winnerName}</div>
+          <div className="text-yellow-400 font-mono text-xl">Total Skor: {score}</div>
+          <div className="text-xs text-slate-500 mt-2 italic">Skor telah disimpan ke papan peringkat</div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 w-full">
+            <button 
+            onClick={onReset}
+            className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-bold py-3 px-6 rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+            >
+            <RefreshCw size={20} /> MAIN LAGI
+            </button>
+            <button 
+            onClick={onExit}
+            className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold py-3 px-6 rounded-xl border border-slate-600 shadow-lg transform transition hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+            >
+            <List size={20} /> PAPAN SKOR
+            </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes animate-confetti {
+          0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+        }
+        @keyframes animate-spin-slow {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
+};
+
+
+// --- KOMPONEN UTAMA ---
+export default function PythonSpaceSnakes() {
+  const [view, setView] = useState('home'); 
+  const [soundOn, setSoundOn] = useState(true);
+  const [user, setUser] = useState(null);
+
+  const AVATARS = ["👨‍🚀", "👽", "🤖", "👾"];
+
+  // GAME SETUP
+  const [players, setPlayers] = useState([
+    { name: '', school: '', province: '', city: '', color: 'bg-cyan-500', avatar: '👨‍🚀' },
+    { name: '', school: '', province: '', city: '', color: 'bg-purple-500', avatar: '👽' }
+  ]);
+  const [difficulty, setDifficulty] = useState('mudah');
+
+  const [questionBank, setQuestionBank] = useState(null);
+  const [usedQuestionIds, setUsedQuestionIds] = useState(new Set());
+
+  const [gameState, setGameState] = useState({
+    activePlayerIndex: 0,
+    playerPositions: [1, 1], 
+    playerScores: [0, 0],
+    isRolling: false,
+    diceValue: 1,
+    winner: null,
+    log: ["Selamat datang di Arena Python!"]
+  });
+
+  const [activeQuestion, setActiveQuestion] = useState(null);
+  const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const [timer, setTimer] = useState(30);
+
+  useEffect(() => {
+    setQuestionBank(generateQuestionBank());
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // --- TIMER LOGIC ---
+  useEffect(() => {
+    let interval = null;
+    if (showQuestionModal && activeQuestion && !feedback && timer > 0) {
+      interval = setInterval(() => {
+        setTimer((prev) => prev - 1);
+      }, 1000);
+    } else if (timer === 0 && showQuestionModal && !feedback) {
+      handleTimeUp();
+    }
+    return () => clearInterval(interval);
+  }, [showQuestionModal, activeQuestion, feedback, timer]);
+
+  const handleTimeUp = () => {
+    playFx('wrong');
+    setFeedback('wrong');
+    addLog("Waktu Habis! Kesempatan hangus.");
+  };
+
+  const handleExitGame = () => {
+    setPlayers([
+        { name: '', school: '', province: '', city: '', color: 'bg-cyan-500', avatar: '👨‍🚀' },
+        { name: '', school: '', province: '', city: '', color: 'bg-purple-500', avatar: '👽' }
+    ]);
+    setDifficulty('mudah');
+    setView('home');
+    setGameState({
+      activePlayerIndex: 0,
+      playerPositions: [1, 1],
+      playerScores: [0, 0],
+      isRolling: false,
+      diceValue: 1,
+      winner: null,
+      log: []
+    });
+    setUsedQuestionIds(new Set());
+  };
+
+  const resetGame = () => {
+    setGameState({
+      activePlayerIndex: 0,
+      playerPositions: players.map(() => 1), 
+      playerScores: players.map(() => 0),
+      isRolling: false,
+      diceValue: 1,
+      winner: null,
+      log: ["Gim dimulai kembali!"]
+    });
+  };
+
+  const exitToScoreboard = () => {
+      setGameState({
+        activePlayerIndex: 0,
+        playerPositions: players.map(() => 1),
+        playerScores: players.map(() => 0),
+        isRolling: false,
+        diceValue: 1,
+        winner: null,
+        log: []
+      });
+      setView('scoreboard');
+  };
+
+  const SNAKES_LADDERS = {
+    3: 22, 7: 17, 12: 29, 25: 47, // Tangga
+    19: 5, 27: 13, 42: 24, 48: 31 // Ular
+  };
+
+  const playFx = (type) => { if (soundOn) playSound(type); };
+  const addLog = (msg) => {
+    setGameState(prev => ({ ...prev, log: [msg, ...prev.log].slice(0, 5) }));
+  };
+
+  // --- MOVEMENT LOGIC ---
+  const handleRollDice = async () => {
+    if (gameState.isRolling || gameState.winner || showQuestionModal) return;
+
+    setGameState(prev => ({ ...prev, isRolling: true }));
+    playFx('roll');
+
+    let roll = 1;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      roll = Math.floor(Math.random() * 6) + 1;
+      setGameState(prev => ({ ...prev, diceValue: roll }));
+    }
+
+    setGameState(prev => ({ ...prev, isRolling: false }));
+    movePlayer(roll);
+  };
+
+  const movePlayer = async (steps) => {
+    const currentIndex = gameState.activePlayerIndex;
+    let currentPos = gameState.playerPositions[currentIndex];
+    const playerName = players[currentIndex].name || `Pemain ${currentIndex + 1}`;
+    
+    addLog(`${playerName} melempar angka ${steps}`);
+
+    let targetPos = currentPos + steps;
+    
+    // Logic Bounce (Pantul) di 50
+    let path = [];
+    if (targetPos > 50) {
+        const overshoot = targetPos - 50;
+        for (let i = currentPos + 1; i <= 50; i++) path.push(i);
+        for (let i = 1; i <= overshoot; i++) path.push(50 - i);
+        targetPos = 50 - overshoot;
+    } else {
+        for (let i = currentPos + 1; i <= targetPos; i++) path.push(i);
+    }
+
+    for (let p of path) {
+        updatePosition(currentIndex, p);
+        playFx('step');
+        await new Promise(r => setTimeout(r, 300));
+    }
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Cek Ular/Tangga
+    if (SNAKES_LADDERS[targetPos]) {
+      const dest = SNAKES_LADDERS[targetPos];
+      const isLadder = dest > targetPos;
+      
+      if (isLadder) {
+        addLog(`NAIK TANGGA! ke ${dest}`);
+        playFx('ladder');
+      } else {
+        addLog(`DIGIGIT ULAR! turun ke ${dest}`);
+        playFx('snake');
+      }
+      
+      updatePosition(currentIndex, dest);
+      targetPos = dest; 
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    // Cek Menang
+    if (targetPos === 50) {
+      setGameState(prev => ({ ...prev, winner: currentIndex }));
+      addLog(`GAME OVER! ${playerName} Menang!`);
+      playFx('win'); 
+      saveScoreToFirebase(players[currentIndex], gameState.playerScores[currentIndex] + 100);
+      return;
+    }
+
+    // CEK TILE TANTANGAN
+    if (isChallengeTile(targetPos)) {
+      triggerQuestion(currentIndex);
+    } else {
+      nextTurn();
+    }
+  };
+
+  const updatePosition = (pIndex, pos) => {
+    setGameState(prev => {
+      const newPos = [...prev.playerPositions];
+      newPos[pIndex] = pos;
+      return { ...prev, playerPositions: newPos };
+    });
+  };
+
+  const nextTurn = () => {
+    setGameState(prev => ({
+      ...prev,
+      activePlayerIndex: (prev.activePlayerIndex + 1) % players.length
+    }));
+  };
+
+  const triggerQuestion = (pIndex) => {
+    if (!questionBank) return;
+
+    let availableQuestions = questionBank[difficulty].filter(q => !usedQuestionIds.has(q.id));
+
+    if (availableQuestions.length === 0) {
+      addLog("Bank soal di-reshuffle!");
+      availableQuestions = questionBank[difficulty];
+    }
+
+    const randomQ = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
+    
+    const newUsed = new Set(usedQuestionIds);
+    newUsed.add(randomQ.id);
+    setUsedQuestionIds(newUsed);
+
+    setActiveQuestion(randomQ);
+    setShowQuestionModal(true);
+    setFeedback(null);
+    setTimer(30); 
+  };
+
+  const answerQuestion = (idx) => {
+    const isCorrect = idx === activeQuestion.ans;
+    const pIndex = gameState.activePlayerIndex;
+    
+    if (isCorrect) {
+      playFx('correct');
+      setFeedback('correct');
+      setGameState(prev => {
+        const newScores = [...prev.playerScores];
+        newScores[pIndex] += 10;
+        return { ...prev, playerScores: newScores };
+      });
+      addLog("Jawaban Benar! (+10 Poin)");
+    } else {
+      playFx('wrong');
+      setFeedback('wrong');
+      addLog("Jawaban Salah!");
+    }
+  };
+
+  const closeQuestionModal = () => {
+      setShowQuestionModal(false);
+      setActiveQuestion(null);
+      nextTurn();
+  };
+
+  const saveScoreToFirebase = async (playerData, finalScore) => {
+    if (!db || !user) return; 
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'scores'), {
+        name: playerData.name || "Anonim",
+        school: playerData.school || "Umum",
+        province: playerData.province,
+        city: playerData.city,
+        score: finalScore,
+        difficulty: difficulty,
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) { console.error(e); }
+  };
+
+  // --- RENDERERS ---
+
+  if (view === 'home') return <HomeScreen 
+    players={players} setPlayers={setPlayers} 
+    difficulty={difficulty} setDifficulty={setDifficulty}
+    setView={setView} setGameState={setGameState}
+    user={user} avatars={AVATARS}
+  />;
+
+  if (view === 'scoreboard') return <ScoreboardScreen onBack={handleExitGame} difficulty={difficulty} user={user} />;
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white font-mono overflow-hidden flex flex-col items-center">
+      {gameState.winner !== null && (
+        <VictoryOverlay 
+          winnerName={players[gameState.winner].name || `Pemain ${gameState.winner+1}`}
+          avatar={players[gameState.winner].avatar}
+          score={gameState.playerScores[gameState.winner]}
+          onReset={resetGame}
+          onExit={exitToScoreboard}
+        />
+      )}
+
+      {/* HEADER */}
+      <div className="w-full p-4 bg-slate-800/80 border-b border-cyan-500/30 flex justify-between items-center backdrop-blur-md z-10 sticky top-0">
+        <div className="flex items-center gap-2">
+          <Rocket className="text-cyan-400 animate-pulse w-5 h-5 md:w-6 md:h-6" />
+          <h1 className="text-lg md:text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent">
+            PYTHON GALAXY QUEST
+          </h1>
+        </div>
+        <div className="flex gap-2 md:gap-4 items-center">
+          <button onClick={() => setSoundOn(!soundOn)} className="p-2 hover:bg-slate-700 rounded-full">
+            {soundOn ? <Volume2 size={20} /> : <VolumeX size={20} />}
+          </button>
+          <button onClick={handleExitGame} className="p-2 hover:bg-red-900/50 text-red-400 rounded-full" title="Keluar">
+             <RotateCcw size={20} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 w-full max-w-7xl flex flex-col lg:flex-row gap-4 p-2 md:p-4 overflow-y-auto">
+        
+        {/* LEGENDA */}
+        <div className="w-full lg:w-48 flex flex-col gap-3 bg-slate-800/50 p-4 rounded-xl border border-slate-700 h-fit shadow-lg shadow-cyan-900/20">
+          <h3 className="text-sm font-bold text-cyan-400 flex items-center gap-2 border-b border-slate-700 pb-2">
+            <BookOpen size={16}/> LEGENDA
+          </h3>
+          <div className="grid grid-cols-3 lg:grid-cols-1 gap-2 text-xs text-slate-300">
+            <div className="flex items-center gap-3">
+               <div className="w-6 h-6 shrink-0 rounded bg-slate-900 flex items-center justify-center border border-slate-700">
+                 <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
+               </div>
+               <span>Tantangan Python</span>
+            </div>
+            <div className="flex items-center gap-3">
+               <div className="w-6 h-6 shrink-0 rounded bg-slate-900 flex items-center justify-center border border-slate-700">
+                 <Rocket size={14} className="text-green-400" />
+               </div>
+               <span>Warp (Naik)</span>
+            </div>
+            <div className="flex items-center gap-3">
+               <div className="w-6 h-6 shrink-0 rounded bg-slate-900 flex items-center justify-center border border-slate-700">
+                 <AlertTriangle size={14} className="text-red-500" />
+               </div>
+               <span>Bahaya (Turun)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* BOARD */}
+        <div className="w-full lg:flex-1 bg-slate-800/50 rounded-xl border border-slate-700 relative flex justify-center items-center shadow-2xl shadow-cyan-900/20 p-2 md:p-4">
+          <div className="absolute inset-0 z-0 opacity-20" style={{backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '30px 30px'}}></div>
+          {/* PASS THE isChallengeTile FUNCTION PROP */}
+          <GameBoard 
+            positions={gameState.playerPositions} 
+            players={players} 
+            snakesLadders={SNAKES_LADDERS}
+            isChallengeTile={isChallengeTile}
+          />
+        </div>
+
+        {/* SIDEBAR */}
+        <div className="w-full lg:w-80 flex flex-col gap-4">
+          <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+            <h3 className="text-sm text-cyan-400 mb-3 flex items-center gap-2"><Users size={16} /> PEMAIN</h3>
+            <div className="space-y-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
+              {players.map((p, idx) => (
+                <div key={idx} className={`p-3 rounded-lg flex justify-between items-center transition-all ${gameState.activePlayerIndex === idx ? 'bg-cyan-900/50 border border-cyan-500 ring-2 ring-cyan-500/20' : 'bg-slate-700/50'}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="text-2xl filter drop-shadow-md">{p.avatar}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold truncate w-20 md:w-24">{p.name || `P${idx+1}`}</div>
+                      <div className="text-xs text-slate-400">Pos: {gameState.playerPositions[idx]}</div>
+                    </div>
+                  </div>
+                  <div className="text-xl font-bold text-yellow-400">{gameState.playerScores[idx]}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col items-center justify-center flex-1 min-h-[300px]">
+            {gameState.winner === null && (
+              <>
+              <div className={`w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center text-5xl font-bold shadow-xl mb-4 transition-transform ${gameState.isRolling ? 'animate-spin' : 'hover:scale-105'}`}>
+                {gameState.diceValue}
+              </div>
+              
+              <button 
+                onClick={handleRollDice}
+                disabled={gameState.isRolling || showQuestionModal}
+                className={`w-full py-4 rounded-xl font-bold text-lg tracking-wider transition-all flex items-center justify-center gap-2
+                  ${gameState.isRolling 
+                    ? 'bg-slate-600 cursor-not-allowed' 
+                    : 'bg-cyan-600 hover:bg-cyan-500 hover:shadow-lg hover:shadow-cyan-500/30 active:scale-95'}`}
+              >
+                {gameState.isRolling ? 'ROLLING...' : 'LEMPAR DADU'} <Play size={20} fill="currentColor" />
+              </button>
+              
+              <div className="mt-4 w-full h-32 bg-slate-900 rounded-lg p-2 overflow-y-auto text-xs font-mono border border-slate-700/50">
+                {gameState.log.map((l, i) => (
+                  <div key={i} className="mb-1 text-cyan-200/80 border-b border-slate-800 pb-1 last:border-0">
+                    &gt; {l}
+                  </div>
+                ))}
+              </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showQuestionModal && activeQuestion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+          {/* WRAPPER BARU: Relative untuk positioning badge */}
+          <div className="relative w-full max-w-lg my-auto animate-in fade-in zoom-in duration-300">
+            
+            {/* BADGE: Dipindahkan keluar dari Container Utama agar tidak terpotong overflow-hidden */}
+            <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-cyan-600 text-white px-6 py-2 rounded-full font-bold shadow-[0_0_15px_rgba(8,145,178,0.6)] border-4 border-slate-900 flex items-center gap-2 whitespace-nowrap z-20">
+              <BookOpen size={18} /> CHALLENGE: {activeQuestion.type}
+            </div>
+
+            {/* CONTAINER UTAMA: Tetap overflow-hidden untuk background efek, tapi padding atas ditambah */}
+            <div className="bg-slate-800 border-2 border-cyan-500 w-full rounded-2xl p-6 pt-8 shadow-2xl relative overflow-hidden">
+                {/* BACKGROUND ANIMASI */}
+                <div className="absolute inset-0 z-0 bg-gradient-to-br from-indigo-900/50 to-purple-900/50 pointer-events-none"></div>
+                
+                <div className="mt-4 mb-4 relative z-10">
+                   {/* COSMIC TIMER UI */}
+                   {!feedback && (
+                     <div className="mb-6 relative w-full h-8 bg-slate-900 rounded-full border border-slate-600 shadow-inner overflow-hidden flex items-center">
+                        <div 
+                            className={`h-full transition-all duration-1000 linear relative ${timer < 10 ? 'bg-gradient-to-r from-red-600 to-orange-500' : 'bg-gradient-to-r from-cyan-500 to-purple-600'}`}
+                            style={{ width: `${(timer / 30) * 100}%` }}
+                        >
+                            <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite] skew-x-12"></div>
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-between px-4 font-bold text-xs tracking-wider z-10">
+                            <span className="text-cyan-100 drop-shadow-md">ENERGY LEVEL</span>
+                            <span className={`flex items-center gap-1 ${timer < 10 ? 'text-red-200 animate-pulse' : 'text-white'}`}>
+                                <Clock size={14}/> {timer}s
+                            </span>
+                        </div>
+                     </div>
+                   )}
+
+                  <h3 className="text-lg md:text-xl font-medium text-center leading-relaxed font-mono bg-slate-900/50 p-4 rounded-xl border border-slate-700/50 backdrop-blur-sm">
+                    {activeQuestion.q}
+                  </h3>
+                  
+                  {feedback && (
+                      <div className={`mt-4 p-4 rounded-xl border text-left animate-in fade-in zoom-in duration-300 shadow-lg ${feedback === 'correct' ? 'bg-green-900/80 border-green-500' : 'bg-red-900/80 border-red-500'}`}>
+                          <div className={`flex items-center gap-2 font-bold mb-2 text-lg ${feedback === 'correct' ? 'text-green-300' : 'text-red-300'}`}>
+                              {feedback === 'correct' ? <CheckCircle size={24}/> : <XCircle size={24}/>}
+                              {feedback === 'correct' ? 'MISI BERHASIL! (+10 Poin)' : (timer === 0 ? 'KEHABISAN ENERGI!' : 'MISI GAGAL!')}
+                          </div>
+                          <div className="text-sm text-white/90 bg-black/20 p-3 rounded-lg">
+                              <span className="font-bold text-yellow-400 uppercase text-xs block mb-1">Analisa Data:</span> 
+                              {activeQuestion.explanation}
+                          </div>
+                          <button 
+                            onClick={closeQuestionModal}
+                            className="mt-4 w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-lg font-bold text-white transition-all shadow-lg active:scale-95"
+                          >
+                            LANJUTKAN MISI
+                          </button>
+                      </div>
+                  )}
+                </div>
+
+                {!feedback && (
+                    <div className="grid grid-cols-1 gap-3 relative z-10">
+                    {activeQuestion.options.map((opt, idx) => (
+                        <button
+                        key={idx}
+                        onClick={() => answerQuestion(idx)}
+                        className="group relative p-4 rounded-xl text-left transition-all font-semibold border text-sm md:text-base bg-slate-700 border-slate-600 hover:bg-slate-600 hover:border-cyan-400 overflow-hidden"
+                        >
+                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/0 via-cyan-500/10 to-purple-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                        <span className="inline-block w-8 text-cyan-400 font-bold group-hover:scale-110 transition-transform">{String.fromCharCode(65+idx)}.</span> 
+                        <span className="relative z-10">{opt}</span>
+                        </button>
+                    ))}
+                    </div>
+                )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Tambahkan style untuk animasi shimmer bar */}
+      <style>{`
+        @keyframes shimmer {
+            0% { transform: translateX(-100%) skewX(-15deg); }
+            100% { transform: translateX(200%) skewX(-15deg); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// --- SUB COMPONENTS ---
+function HomeScreen({ players, setPlayers, difficulty, setDifficulty, setView, setGameState, user, avatars }) {
+  
+  // --- INFORMASI TOPIK PER LEVEL ---
+  const DIFFICULTY_INFO = {
+    mudah: "Topik: Dasar Python, Variabel, Tipe Data, Input/Output, & Operator Aritmatika Sederhana.",
+    sedang: "Topik: Struktur Data (List/Dict), Perulangan (Loop), Kondisi (If-Else), & Modulus.",
+    sulit: "Topik: Fungsi, OOP (Class/Object), Manipulasi String (Slicing), Modul, & Logika Boolean."
+  };
+
+  const addPlayer = () => { if (players.length < 4) setPlayers([...players, { name: '', school: '', province: '', city: '', color: 'bg-green-500', avatar: avatars[players.length % avatars.length] }]); };
+  const removePlayer = () => { if (players.length > 2) setPlayers(players.slice(0, -1)); };
+  const updatePlayer = (idx, field, val) => {
+    const newP = [...players]; newP[idx][field] = val; if (field === 'province') newP[idx].city = ''; setPlayers(newP);
+  };
+  const startGame = () => {
+    setGameState({
+      activePlayerIndex: 0, playerPositions: players.map(() => 1), playerScores: players.map(() => 0),
+      isRolling: false, diceValue: 1, winner: null, log: ["Gim dimulai! Giliran Pemain 1."]
+    });
+    setView('game');
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute inset-0 z-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-30 animate-pulse"></div>
+      <div className="relative z-10 w-full max-w-4xl bg-slate-800/90 backdrop-blur-md rounded-2xl border border-cyan-500/30 shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[90vh]">
+        <div className="p-6 md:p-8 md:w-1/3 bg-gradient-to-br from-cyan-900 to-slate-900 flex flex-col justify-between overflow-y-auto">
+          <div>
+            <div className="flex items-center gap-3 mb-6">
+               <div className="bg-cyan-500 p-3 rounded-xl shadow-lg shadow-cyan-500/30 relative">
+                 <Rocket size={32} className="text-white relative z-10"/>
+                 <Sparkles size={20} className="text-yellow-300 absolute -top-1 -right-1 animate-pulse" />
+               </div>
+               <h1 className="text-2xl md:text-3xl font-bold leading-none">PYTHON<br/><span className="text-cyan-400">GALAXY QUEST</span></h1>
+            </div>
+            <p className="text-slate-300 text-sm mb-6 leading-relaxed">Jelajahi antariksa dengan kekuatan koding! Hindari lubang hitam dan temukan jalan pintas menuju kemenangan.</p>
+            <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+              <h3 className="text-cyan-400 font-bold text-sm mb-3 flex items-center gap-2"><BookOpen size={16}/> PROTOKOL MISI</h3>
+              <ul className="text-xs text-slate-300 space-y-2 list-none">
+                <li className="flex gap-2"><span className="text-yellow-400 font-bold">1.</span> Pilih karakter & profilmu.</li>
+                <li className="flex gap-2"><span className="text-yellow-400 font-bold">2.</span> Lempar dadu untuk jalan.</li>
+                <li className="flex gap-2"><span className="text-yellow-400 font-bold">3.</span> Jawab kuis Python = Poin!</li>
+                <li className="flex gap-2"><span className="text-yellow-400 font-bold">4.</span> <span className="text-red-400">Alien</span>=Turun, <span className="text-green-400">Roket</span>=Naik.</li>
+                <li className="flex gap-2"><span className="text-yellow-400 font-bold">5.</span> Capai kotak 50 untuk menang & dapat <span className="text-yellow-400 font-bold ml-1">100 Poin!</span></li>
+              </ul>
+            </div>
+          </div>
+          <div className="mt-8">
+            <button onClick={() => setView('scoreboard')} disabled={!user} className={`flex items-center gap-2 transition-colors text-sm font-bold ${user ? 'text-cyan-400 hover:text-white' : 'text-slate-600 cursor-not-allowed'}`}><Trophy size={16} /> {user ? 'LIHAT PAPAN SKOR' : 'Memuat Data...'}</button>
+          </div>
+        </div>
+        <div className="p-6 md:p-8 md:w-2/3 overflow-y-auto custom-scrollbar">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Activity size={20} className="text-purple-400"/> DATA KRU</h2>
+          <div className="space-y-4 mb-4">
+            {players.map((p, idx) => (
+              <div key={idx} className="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
+                <div className="flex justify-between mb-2 items-center">
+                   <span className="text-xs font-bold text-cyan-400 uppercase">Pemain {idx + 1}</span>
+                   <div className="flex gap-1 overflow-x-auto no-scrollbar">
+                      {avatars.map(av => (<button key={av} onClick={() => updatePlayer(idx, 'avatar', av)} className={`text-lg p-1 rounded hover:bg-slate-600 ${p.avatar === av ? 'bg-slate-600 ring-1 ring-cyan-400' : ''}`}>{av}</button>))}
+                   </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <input type="text" placeholder="Nama Lengkap" className="bg-slate-800 border border-slate-600 rounded p-2 text-sm focus:border-cyan-500 outline-none w-full" value={p.name} onChange={(e) => updatePlayer(idx, 'name', e.target.value)}/>
+                  <input type="text" placeholder="Asal Sekolah" className="bg-slate-800 border border-slate-600 rounded p-2 text-sm focus:border-cyan-500 outline-none w-full" value={p.school} onChange={(e) => updatePlayer(idx, 'school', e.target.value)}/>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                   <select className="bg-slate-800 border border-slate-600 rounded p-2 text-xs outline-none w-full" value={p.province} onChange={(e) => updatePlayer(idx, 'province', e.target.value)}>
+                     <option value="" disabled>Pilih Provinsi...</option>{PROVINSI_KEYS.map(prov => <option key={prov} value={prov}>{prov}</option>)}
+                   </select>
+                   <select className="bg-slate-800 border border-slate-600 rounded p-2 text-xs outline-none w-full" value={p.city} onChange={(e) => updatePlayer(idx, 'city', e.target.value)} disabled={!p.province}>
+                     <option value="" disabled>Pilih Kota/Kab...</option>{(DATA_WILAYAH_LENGKAP[p.province] || []).map(city => <option key={city} value={city}>{city}</option>)}
+                   </select>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-3 mt-4 mb-6">
+            <button 
+              onClick={addPlayer} 
+              disabled={players.length >= 4} 
+              className="group flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20 transition-all active:scale-95 flex items-center justify-center gap-2 border border-emerald-500/30"
+            >
+              <UserPlus size={18} className="group-hover:scale-110 transition-transform" />
+              REKRUT KRU
+            </button>
+            <button 
+              onClick={removePlayer} 
+              disabled={players.length <= 2} 
+              className="group flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-slate-700 to-slate-600 hover:from-red-600 hover:to-red-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-slate-900/20 transition-all active:scale-95 flex items-center justify-center gap-2 border border-slate-500/30"
+            >
+              <UserMinus size={18} className="group-hover:scale-110 transition-transform" />
+              KURANGI KRU
+            </button>
+          </div>
+          <div className="mb-6">
+            <label className="text-xs text-slate-400 mb-2 block">TINGKAT KESULITAN</label>
+            <div className="flex gap-2 mb-3">
+              {['mudah', 'sedang', 'sulit'].map(lv => (<button key={lv} onClick={() => setDifficulty(lv)} className={`flex-1 py-2 rounded border uppercase text-xs font-bold transition-all ${difficulty === lv ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'}`}>{lv}</button>))}
+            </div>
+            {/* DESKRIPSI TOPIK */}
+            <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 text-xs text-cyan-200/80 flex items-start gap-2">
+                <Info size={14} className="shrink-0 mt-0.5" />
+                <span>{DIFFICULTY_INFO[difficulty]}</span>
+            </div>
+          </div>
+          <button onClick={startGame} className="w-full bg-cyan-500 hover:bg-cyan-400 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-95 flex justify-center items-center gap-2"><Rocket size={20} /> MULAI PETUALANGAN</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GameBoard({ positions, players, snakesLadders, isChallengeTile }) {
+  const getTileCoords = (num) => {
+    const n = num - 1; const r = Math.floor(n / 10); const c = n % 10;
+    const y = (4 - r) * 10 + 5; let x; if (r % 2 === 0) { x = c * 10 + 5; } else { x = (9 - c) * 10 + 5; }
+    return { x, y };
+  };
+  const renderConnections = () => {
+    return Object.entries(snakesLadders).map(([start, end], idx) => {
+        const s = parseInt(start); const e = end; const isLadder = e > s;
+        const startCoords = getTileCoords(s); const endCoords = getTileCoords(e);
+        const pathD = isLadder ? `M ${startCoords.x} ${startCoords.y} L ${endCoords.x} ${endCoords.y}` : `M ${startCoords.x} ${startCoords.y} Q ${(startCoords.x + endCoords.x)/2 + 10} ${(startCoords.y + endCoords.y)/2} ${endCoords.x} ${endCoords.y}`;
+        return (
+            <g key={idx}>
+                <path d={pathD} stroke="black" strokeWidth="0.8" fill="none" opacity="0.3" />
+                <path d={pathD} stroke={isLadder ? "#4ade80" : "#f87171"} strokeWidth="0.5" fill="none" strokeDasharray={isLadder ? "2,1" : "0"} markerEnd={`url(#${isLadder ? 'arrow-up' : 'arrow-down'})`}/>
+            </g>
+        );
+    });
+  };
+  const rows = []; for (let r = 4; r >= 0; r--) { let cols = []; for (let c = 0; c < 10; c++) { let num; if (r % 2 === 0) { num = (r * 10) + c + 1; } else { num = (r * 10) + (10 - c); } cols.push(num); } rows.push(cols); }
+  return (
+    <div className="relative w-full aspect-[2/1] max-w-4xl mx-auto grid grid-rows-5 bg-slate-900 border-2 md:border-4 border-slate-700 p-1">
+      <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible" viewBox="0 0 100 50" preserveAspectRatio="none">
+        <defs>
+            <marker id="arrow-up" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0,0 L0,4 L4,2 z" fill="#4ade80" /></marker>
+            <marker id="arrow-down" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0,0 L0,4 L4,2 z" fill="#f87171" /></marker>
+        </defs>
+        {renderConnections()}
+      </svg>
+      {rows.map((row, rIdx) => (
+        <div key={rIdx} className="grid grid-cols-10 z-0">
+          {row.map((num) => {
+            const isDark = (rIdx + row.indexOf(num)) % 2 !== 0;
+            const isSnakeHead = Object.keys(snakesLadders).find(k => parseInt(k) === num && snakesLadders[k] < num);
+            const isLadderBase = Object.keys(snakesLadders).find(k => parseInt(k) === num && snakesLadders[k] > num);
+            
+            // Gunakan fungsi isChallengeTile yang sama persis
+            // Pastikan bukan kepala ular atau dasar tangga agar ikon tidak bertumpuk
+            const showChallengeIcon = isChallengeTile(num) && !isSnakeHead && !isLadderBase;
+
+            return (
+              <div key={num} className={`relative flex items-center justify-center border-[0.5px] border-white/5 ${isDark ? 'bg-slate-800/50' : 'bg-slate-800/30'}`}>
+                <span className="absolute top-0.5 left-0.5 text-[8px] sm:text-[10px] md:text-xs text-slate-500 font-bold">{num}</span>
+                {num === 1 && <span className="text-[6px] sm:text-[8px] text-green-400 absolute bottom-0.5 font-bold">START</span>}
+                {num === 50 && <span className="text-[6px] sm:text-[8px] text-red-400 absolute bottom-0.5 font-bold">FINISH</span>}
+                
+                {isSnakeHead && <AlertTriangle className="text-red-500 opacity-80 absolute bottom-0.5 right-0.5 w-3 h-3 sm:w-4 sm:h-4" />}
+                {isLadderBase && <Rocket className="text-green-400 opacity-80 absolute bottom-0.5 right-0.5 w-3 h-3 sm:w-4 sm:h-4" />}
+                
+                {/* Tampilkan ikon biru HANYA jika isChallengeTile bernilai true */}
+                {showChallengeIcon && (
+                    <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-blue-500/80 shadow-[0_0_8px_rgba(59,130,246,0.8)] absolute bottom-1 right-1"></div>
+                )}
+                
+                <div className="flex justify-center items-center absolute inset-0 z-20 pointer-events-none">
+                  {positions.map((pos, pIdx) => { if (pos === num) return (<div key={pIdx} className="text-base sm:text-xl md:text-2xl animate-bounce filter drop-shadow-sm transition-all duration-300" style={{animationDuration: '1s'}}>{players[pIdx].avatar}</div>); return null; })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScoreboardScreen({ onBack, difficulty, user }) {
+  const [scores, setScores] = useState([]);
+  const [filterProv, setFilterProv] = useState('Semua');
+  const [filterCity, setFilterCity] = useState('Semua');
+
+  useEffect(() => {
+    if (!db || !user) return;
+    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'scores'), orderBy('score', 'desc'), limit(50));
+    const unsubscribe = onSnapshot(q, (snapshot) => { const data = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()})); setScores(data); }, (error) => console.error(error));
+    return () => unsubscribe();
+  }, [user]);
+
+  const filteredScores = scores.filter(s => {
+    if (filterProv !== 'Semua' && s.province !== filterProv) return false;
+    if (filterCity !== 'Semua' && s.city !== filterCity) return false;
+    return true;
+  });
+
+  return (
+    <div className="min-h-screen w-full bg-slate-900 text-white flex flex-col items-center p-4 md:p-8">
+      <div className="w-full max-w-4xl">
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
+          <h2 className="text-2xl md:text-3xl font-bold text-yellow-400 flex items-center gap-3"><Trophy size={32}/> PAPAN SKOR PYTHON GALAXY QUEST</h2>
+          <button onClick={onBack} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 w-full sm:w-auto">Kembali ke Home</button>
+        </div>
+        <div className="bg-slate-800 rounded-xl p-4 md:p-6 border border-slate-700 shadow-2xl overflow-hidden">
+          
+          <div className="flex flex-col sm:flex-row gap-4 mb-6">
+            <div className="flex-1">
+                <label className="text-xs text-slate-400 block mb-1">Filter Provinsi</label>
+                <select 
+                  className="bg-slate-900 border border-slate-600 rounded p-2 text-sm w-full outline-none" 
+                  value={filterProv}
+                  onChange={(e) => {
+                    setFilterProv(e.target.value);
+                    setFilterCity('Semua');
+                  }}
+                >
+                  <option value="Semua">Semua Provinsi</option>
+                  {PROVINSI_KEYS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+            </div>
+            <div className="flex-1">
+                <label className="text-xs text-slate-400 block mb-1">Filter Kota/Kab</label>
+                <select 
+                  className="bg-slate-900 border border-slate-600 rounded p-2 text-sm w-full outline-none disabled:opacity-50" 
+                  value={filterCity}
+                  onChange={(e) => setFilterCity(e.target.value)}
+                  disabled={filterProv === 'Semua'}
+                >
+                  <option value="Semua">Semua Kota/Kab</option>
+                  {(DATA_WILAYAH_LENGKAP[filterProv] || []).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm min-w-[600px]">
+              <thead className="bg-slate-900 text-cyan-400 uppercase font-bold"><tr><th className="p-3 rounded-tl-lg">Rank</th><th className="p-3">Nama</th><th className="p-3">Sekolah</th><th className="p-3">Wilayah</th><th className="p-3">Level</th><th className="p-3 rounded-tr-lg text-right">Skor</th></tr></thead>
+              <tbody className="divide-y divide-slate-700">
+                {!user ? (<tr><td colSpan="6" className="p-8 text-center text-slate-500 animate-pulse">Menghubungkan ke database antariksa...</td></tr>) : filteredScores.length === 0 ? (<tr><td colSpan="6" className="p-8 text-center text-slate-500">Belum ada data skor untuk filter ini.</td></tr>) : (filteredScores.map((s, i) => (<tr key={s.id} className="hover:bg-slate-700/50 transition-colors"><td className="p-3 font-bold text-slate-400">#{i + 1}</td><td className="p-3 font-bold truncate max-w-[150px]">{s.name}</td><td className="p-3 truncate max-w-[150px]">{s.school}</td><td className="p-3 text-xs text-slate-400">{s.city}, {s.province}</td><td className="p-3 uppercase text-xs font-bold text-purple-400">{s.difficulty}</td><td className="p-3 text-right font-mono font-bold text-yellow-400">{s.score}</td></tr>)))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
